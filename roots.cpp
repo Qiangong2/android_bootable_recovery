@@ -120,6 +120,88 @@ int ensure_path_mounted(const char* path) {
             return -1;
         }
         return mtd_mount_partition(partition, v->mount_point, v->fs_type, 0);
+	} else if (strcmp(v->fs_type, "ubifs") == 0) {
+        LOGI("ensure_path_mounted ubifs:  %s %s %s %s\n", v->mount_point, v->fs_type,
+               v->device, v->device2);
+        libubi_t libubi;
+        struct ubi_info ubi_info;
+        struct ubi_dev_info dev_info;
+        struct ubi_attach_request req;
+        int err;
+        char value[32] = {0};
+
+        mtd_scan_partitions();
+        int mtdn = mtd_get_index_by_name(v->device);
+        if (mtdn < 0) {
+            LOGE("bad mtd index for %s\n", v->device);
+            return -1;
+        }
+
+        libubi = libubi_open();
+        if (!libubi) {
+            LOGE("libubi_open fail\n");
+            return -1;
+        }
+		
+        /*
+         * Make sure the kernel is fresh enough and this feature is supported.
+         */
+        err = ubi_get_info(libubi, &ubi_info);
+        if (err) {
+            LOGE("cannot get UBI information\n");
+            goto out_ubi_close;
+        }
+
+        if (ubi_info.ctrl_major == -1) {
+            LOGE("MTD attach/detach feature is not supported by your kernel\n");
+            goto out_ubi_close;
+        }
+
+        req.dev_num = UBI_DEV_NUM_AUTO;
+        req.mtd_num = mtdn;
+        req.vid_hdr_offset = 0;
+        req.mtd_dev_node = NULL;
+
+        // make sure partition is detached before attaching
+        ubi_detach_mtd(libubi, DEFAULT_CTRL_DEV, mtdn);
+
+        err = ubi_attach(libubi, DEFAULT_CTRL_DEV, &req);
+        if (err) {
+            LOGE("cannot attach mtd%d", mtdn);
+            goto out_ubi_close;
+        }
+
+        /* Print some information about the new UBI device */
+        err = ubi_get_dev_info1(libubi, req.dev_num, &dev_info);
+        if (err) {
+            LOGE("cannot get information about newly created UBI device\n");
+            goto out_ubi_detach;
+        }
+
+        sprintf(value, "/dev/ubi%d_0", dev_info.dev_num);
+
+        /* Print information about the created device */
+        //err = ubi_get_vol_info1(libubi, dev_info.dev_num, 0, &vol_info);
+        //if (err) {
+        //  LOGE("cannot get information about UBI volume 0");
+        //  goto out_ubi_detach;
+        //}
+
+        if (mount(value, v->mount_point, v->fs_type,  MS_NOATIME | MS_NODEV | MS_NODIRATIME, NULL )) {
+            LOGE("cannot mount ubifs %s to %s\n", value, v->mount_point);
+            goto out_ubi_detach;
+        }
+        LOGI("mount ubifs successful  %s to %s\n", value, v->mount_point);
+
+        libubi_close(libubi);
+        return 0;
+
+out_ubi_detach:
+        ubi_detach_mtd(libubi, DEFAULT_CTRL_DEV, mtdn);
+
+out_ubi_close:
+        libubi_close(libubi);
+        return -1;
     } else if (strcmp(v->fs_type, "ext4") == 0 ||
                strcmp(v->fs_type, "squashfs") == 0 ||
                strcmp(v->fs_type, "vfat") == 0) {
