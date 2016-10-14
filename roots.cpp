@@ -37,7 +37,11 @@ extern "C" {
 #include "cryptfs.h"
 }
 
+#include "libubi.h"
+#define DEFAULT_CTRL_DEV "/dev/ubi_ctrl"
+
 static struct fstab *fstab = NULL;
+static int format_ubifs_volume(const char* location); 
 
 extern struct selabel_handle *sehandle;
 
